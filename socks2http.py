@@ -1,6 +1,7 @@
 import asyncore
 import socket
 import socks
+import traceback
 from threading import Thread
 from Queue import Queue
 
@@ -18,38 +19,51 @@ def connection_worker():
 	try:
 	    c.connect_target(c.host)
 	    if c.init_req:
-	        c.target.send(c.init_req)
+	        c.socks.addbuf(c.init_req)
 	    else:
-	        c.send(HTTPVER+' 200 Connection established\n'+ 
+	        c.addbuf(HTTPVER+' 200 Connection established\n'+ 
 			    	         'Proxy-agent: %s\n\n'%VERSION)
-	except:
-		pass
+	except Exception as e:
+	    traceback.print_exc()
 	conn_q.task_done()
 
-class SocksProxyHandler(asyncore.dispatcher_with_send):
+class SocksProxyHandler(asyncore.dispatcher):
     def __init__(self, sock, src):
-    	asyncore.dispatcher_with_send.__init__(self, sock)
+    	asyncore.dispatcher.__init__(self, sock)
 	self.sock = sock
 	self.src = src
+	self.sendbuf = ''
 
     def handle_read(self):
         data = self.recv(8192)
 	try:
-	    self.src.send(data)
-	except:
+	    self.src.addbuf(data)
+	except Exception as e:
+	    traceback.print_exc()
 	    self.close()
     def handle_close(self):
 	self.close()
         self.src.close()
 
-class HTTPProxyHandler(asyncore.dispatcher_with_send):
+    def addbuf(self, data):
+        self.sendbuf += data
+
+    def handle_write(self):
+        sent = self.send(self.sendbuf)
+        self.sendbuf = self.sendbuf[sent:]
+
+    def writable(self):
+        return (len(self.sendbuf) > 0)
+
+class HTTPProxyHandler(asyncore.dispatcher):
     def __init__(self, sock):
-    	asyncore.dispatcher_with_send.__init__(self, sock)
+    	asyncore.dispatcher.__init__(self, sock)
 	self.connected = False
 	self.client_buffer = ''
 	self.sock = sock
 	self.target = socks.socksocket()
 	self.socks = None
+	self.sendbuf = ''
     
     def connect_target(self, host):
         i = host.find(':')
@@ -67,6 +81,16 @@ class HTTPProxyHandler(asyncore.dispatcher_with_send):
 	self.close()
 	if self.socks:
             self.socks.close()
+
+    def addbuf(self, data):
+        self.sendbuf += data
+
+    def handle_write(self):
+        sent = self.send(self.sendbuf)
+        self.sendbuf = self.sendbuf[sent:]
+
+    def writable(self):
+        return (len(self.sendbuf) > 0)
 
     def handle_read(self):
         if not self.connected:
@@ -99,8 +123,9 @@ class HTTPProxyHandler(asyncore.dispatcher_with_send):
 
         data = self.recv(8192)
 	try:
-	    self.target.send(data)
-	except:
+	    self.socks.addbuf(data)
+	except Exception as e:
+	    traceback.print_exc()
 	    self.close()
 
 class HTTPProxyServer(asyncore.dispatcher):
@@ -124,4 +149,4 @@ for i in range(3):
     t.daemon =True
     t.start()
 server = HTTPProxyServer('localhost', 8080)
-asyncore.loop()
+asyncore.loop(timeout=0.05)
