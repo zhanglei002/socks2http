@@ -36,6 +36,9 @@ class SocksProxyHandler(asyncore.dispatcher):
 
     def handle_read(self):
         data = self.recv(8192)
+	if len(data) == 0:
+	    self.handle_close()
+	    return None
 	try:
 	    self.src.addbuf(data)
 	except Exception as e:
@@ -122,6 +125,9 @@ class HTTPProxyHandler(asyncore.dispatcher):
 	    return None
 
         data = self.recv(8192)
+	if len(data) == 0:
+	    self.handle_close()
+	    return None
 	try:
 	    self.socks.addbuf(data)
 	except Exception as e:
