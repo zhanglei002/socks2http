@@ -46,6 +46,8 @@ class SocksProxyHandler(asyncore.dispatcher):
 	    self.close()
     def handle_close(self):
 	self.close()
+        if len(self.src.sendbuf) > 0:
+	    self.src.send(self.src.sendbuf)
         self.src.close()
 
     def addbuf(self, data):
@@ -83,6 +85,8 @@ class HTTPProxyHandler(asyncore.dispatcher):
     def handle_close(self):
 	self.close()
 	if self.socks:
+            if len(self.socks.sendbuf) > 0:
+	        self.socks.send(self.socks.sendbuf)
             self.socks.close()
 
     def addbuf(self, data):
