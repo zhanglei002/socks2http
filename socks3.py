@@ -32,6 +32,7 @@ for tunneling connections through SOCKS proxies.
 
 import socket
 import struct
+import asyncio
 
 PROXY_TYPE_SOCKS4 = 1
 PROXY_TYPE_SOCKS5 = 2
@@ -131,6 +132,7 @@ class socksocket(socket.socket):
 		self.__proxysockname = None
 		self.__proxypeername = None
 	
+	@asyncio.coroutine
 	def __recvall(self, bytes):
 		"""__recvall(bytes) -> data
 		Receive EXACTLY the number of bytes requested from the socket.
@@ -138,7 +140,7 @@ class socksocket(socket.socket):
 		"""
 		data = ""
 		while len(data) < bytes:
-			tmp = self.recv(bytes-len(data))
+			tmp = yield from self.reader.read(bytes-len(data))
 			if len(tmp) == 0:
 				raise GeneralProxyError((1,_generalerrors[1]))
 			data += tmp.decode()
@@ -163,6 +165,7 @@ class socksocket(socket.socket):
 		"""
 		self.__proxy = (proxytype,addr,port,rdns,username,password)
 	
+	@asyncio.coroutine
 	def __negotiatesocks5(self,destaddr,destport):
 		"""__negotiatesocks5(self,destaddr,destport)
 		Negotiates a connection through a SOCKS5 server.
@@ -176,10 +179,10 @@ class socksocket(socket.socket):
 		else:
 			# No username/password were entered, therefore we
 			# only support connections with no authentication.
-			self.sendall(b"\x05\x01\x00")
+			self.writer.write(b"\x05\x01\x00")
 		# We'll receive the server's response to determine which
 		# method was selected
-		chosenauth = self.__recvall(2)
+		chosenauth = yield from self.__recvall(2)
 		if chosenauth[0] != "\x05":
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
@@ -226,9 +229,9 @@ class socksocket(socket.socket):
 				ipaddr = socket.inet_aton(socket.gethostbyname(destaddr))
 				req = req + b"\x01" + ipaddr
 		req = req + struct.pack(">H",destport)
-		self.sendall(req)
+		self.writer.write(req)
 		# Get the response
-		resp = self.__recvall(4)
+		resp = yield from self.__recvall(4)
 		if resp[0] != "\x05":
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
@@ -241,14 +244,14 @@ class socksocket(socket.socket):
 				raise Socks5Error(9,_generalerrors[9])
 		# Get the bound address/port
 		elif resp[3] == "\x01":
-			boundaddr = self.__recvall(4)
+			boundaddr = yield from self.__recvall(4)
 		elif resp[3] == "\x03":
-			resp = resp + self.recv(1)
-			boundaddr = self.__recvall(resp[4])
+			resp += yield from self.__recvall(1)
+			boundaddr = yield from self.__recvall(resp[4])
 		else:
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
-		boundport = struct.unpack(">H",self.__recvall(2).encode())[0]
+		boundport = struct.unpack(">H",(yield from self.__recvall(2)).encode())[0]
 		self.__proxysockname = (boundaddr,boundport)
 		if ipaddr != None:
 			self.__proxypeername = (socket.inet_ntoa(ipaddr),destport)
@@ -353,6 +356,7 @@ class socksocket(socket.socket):
 		self.__proxysockname = ("0.0.0.0",0)
 		self.__proxypeername = (addr,destport)
 	
+	@asyncio.coroutine
 	def connect(self,destpair):
 		"""connect(self,despair)
 		Connects to the specified destination through a proxy.
@@ -369,7 +373,8 @@ class socksocket(socket.socket):
 			else:
 				portnum = 1080
 			_orgsocket.connect(self,(self.__proxy[1],portnum))
-			self.__negotiatesocks5(destpair[0],destpair[1])
+			self.reader, self.writer = yield from asyncio.open_connection(sock=self, loop=asyncio.get_event_loop())
+			yield from self.__negotiatesocks5(destpair[0],destpair[1])
 		elif self.__proxy[0] == PROXY_TYPE_SOCKS4:
 			if self.__proxy[2] != None:
 				portnum = self.__proxy[2]
