@@ -8,11 +8,10 @@ import threading
 VERSION = 'socks2http/0.01'
 HTTPVER = 'HTTP/1.1'
 
-@asyncio.coroutine
-def get_request(reader, writer):
+async def get_request(reader, writer):
     req = ''
     while True:
-        data = yield from reader.read(8192)
+        data = await reader.read(8192)
         if len(data) <= 0:
             return None, None, None, None
         req += data.decode()
@@ -23,8 +22,7 @@ def get_request(reader, writer):
     print('%r: %s'%(req[:end], addr))
     return req[:end+1].split() + [req[end+1:],]
 
-@asyncio.coroutine
-def connect_target(host):
+async def connect_target(host):
     i = host.find(':')
     if i!=-1:
         port = int(host[i+1:])
@@ -35,60 +33,61 @@ def connect_target(host):
     target = socks3.socksocket()
     target.setproxy(socks3.PROXY_TYPE_SOCKS5, '127.0.0.1', 8087)
     try:
-        yield from target.connect(address)
+        await target.connect(address)
     except:
         target.close()
         target = None
     return target
 
-@asyncio.coroutine
-def handle_socks(socks_reader, http_writer):
+async def handle_socks(socks_reader, http_writer, stats):
     while True:
-        data = yield from socks_reader.read(8192)
+        data = await socks_reader.read(8192)
         if len(data) <= 0:
             break
+        stats["down"] += len(data)
         http_writer.write(data)
-        yield from http_writer.drain()
+        await http_writer.drain()
     http_writer.close()
 
-@asyncio.coroutine
-def handle_http(reader, writer):
-    method, path, protocol, data = yield from get_request(reader, writer) 
+async def handle_http(reader, writer):
+    stats = {"up":0, "down":0}
+    method, path, protocol, data = await get_request(reader, writer) 
     if method == None:
         writer.close()
         return
     elif method == 'CONNECT':
-        target = yield from connect_target(path)
+        target = await connect_target(path)
         if not target:
             writer.close()
             return
         writer.write((HTTPVER+' 200 Connection established\n'+
                                          'Proxy-agent: %s\n\n'%VERSION).encode())
-        yield from writer.drain()
+        await writer.drain()
     elif method in ('OPTIONS', 'GET', 'HEAD', 'POST', 'PUT',
                                  'DELETE', 'TRACE'):
-        path = path[7:]
-        i = path.find('/')
-        host = path[:i]
-        path = path[i:]
-        target = yield from connect_target(host)
+        url = path[7:]
+        i = url.find('/')
+        host = url[:i]
+        url = url[i:]
+        target = await connect_target(host)
         if not target:
             writer.close()
             return
-        target.send(('%s %s %s\n'%(method, path, protocol)+ data).encode())
+        target.send(('%s %s %s\n'%(method, url, protocol)+ data).encode())
     else:
         print("HTTPProxy protocol error")
 
-    socks_reader, socks_writer = yield from asyncio.open_connection(sock=target, loop=loop)
-    asyncio.ensure_future(handle_socks(socks_reader, writer))
+    socks_reader, socks_writer = await asyncio.open_connection(sock=target, loop=loop)
+    asyncio.ensure_future(handle_socks(socks_reader, writer, stats))
     while True:
-        data = yield from reader.read(512)
+        data = await reader.read(512)
         if len(data) <= 0:
             break
+        stats["up"] += len(data)
         socks_writer.write(data)
-        yield from socks_writer.drain()
+        await socks_writer.drain()
 
-    print("Close the client socket", writer.transport)
+    print("FINISH", path, stats)
     writer.close()
     socks_writer.close()
 
