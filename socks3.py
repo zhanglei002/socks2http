@@ -1,8 +1,6 @@
 """SocksiPy - Python SOCKS module.
 Version 1.00
-
 Copyright 2006 Dan-Haim. All rights reserved.
-
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
 1. Redistributions of source code must retain the above copyright notice, this
@@ -23,11 +21,8 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA
 OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMANGE.
-
-
 This module provides a standard socket-like interface for Python
 for tunneling connections through SOCKS proxies.
-
 """
 
 import socket
@@ -137,12 +132,12 @@ class socksocket(socket.socket):
 		Receive EXACTLY the number of bytes requested from the socket.
 		Blocks until the required number of bytes have been received.
 		"""
-		data = ""
+		data = b""
 		while len(data) < bytes:
 			tmp = await self.reader.read(bytes-len(data))
 			if len(tmp) == 0:
 				raise GeneralProxyError((1,_generalerrors[1]))
-			data += tmp.decode()
+			data += tmp
 		return data
 	
 	def setproxy(self,proxytype=None,addr=None,port=None,rdns=True,username=None,password=None):
@@ -173,7 +168,7 @@ class socksocket(socket.socket):
 			# The username/password details were supplied to the
 			# setproxy method so we support the USERNAME/PASSWORD
 			# authentication (in addition to the standard none).
-			self.sendall("\x05\x02\x00\x02")
+			self.sendall(b"\x05\x02\x00\x02")
 		else:
 			# No username/password were entered, therefore we
 			# only support connections with no authentication.
@@ -181,23 +176,24 @@ class socksocket(socket.socket):
 		# We'll receive the server's response to determine which
 		# method was selected
 		chosenauth = await self.__recvall(2)
-		if chosenauth[0] != "\x05":
+		if chosenauth[0] != 5:
 			self.close()
+			print("ret c", repr(chosenauth), repr(chosenauth[0]))
 			raise GeneralProxyError((1,_generalerrors[1]))
 		# Check the chosen authentication method
-		if chosenauth[1] == "\x00":
+		if chosenauth[1] == 0:
 			# No authentication is required
 			pass
-		elif chosenauth[1] == "\x02":
+		elif chosenauth[1] == 2:
 			# Okay, we need to perform a basic username/password
 			# authentication.
-			self.sendall("\x01" + chr(len(self.__proxy[4])) + self.__proxy[4] + chr(len(self.proxy[5])) + self.__proxy[5])
+			self.sendall(b"\x01" + chr(len(self.__proxy[4])) + self.__proxy[4] + chr(len(self.proxy[5])) + self.__proxy[5])
 			authstat = self.__recvall(2)
-			if authstat[0] != "\x01":
+			if authstat[0] != 1:
 				# Bad response
 				self.close()
 				raise GeneralProxyError((1,_generalerrors[1]))
-			if authstat[1] != "\x00":
+			if authstat[1] != 0:
 				# Authentication failed
 				self.close()
 				raise Socks5AuthError((3,_socks5autherrors[3]))
@@ -205,7 +201,7 @@ class socksocket(socket.socket):
 		else:
 			# Reaching here is always bad
 			self.close()
-			if chosenauth[1] == "\xFF":
+			if chosenauth[1] == 255:
 				raise Socks5AuthError((2,_socks5autherrors[2]))
 			else:
 				raise GeneralProxyError((1,_generalerrors[1]))
@@ -221,7 +217,7 @@ class socksocket(socket.socket):
 			if self.__proxy[3]==True:
 				# Resolve remotely
 				ipaddr = None
-				req = req + b"\x03" + chr(len(destaddr)) + destaddr
+				req = req + b"\x03" + chr(len(destaddr)).encode() + destaddr.encode()
 			else:
 				# Resolve locally
 				ipaddr = socket.inet_aton(socket.gethostbyname(destaddr))
@@ -230,26 +226,26 @@ class socksocket(socket.socket):
 		self.writer.write(req)
 		# Get the response
 		resp = await self.__recvall(4)
-		if resp[0] != "\x05":
+		if resp[0] != 5:
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
-		elif resp[1] != "\x00":
+		elif resp[1] != 0:
 			# Connection failed
 			self.close()
-			if ord(resp[1])<=8:
+			if resp[1]<=8:
 				raise Socks5Error(ord(resp[1]),_generalerrors[ord(resp[1])])
 			else:
 				raise Socks5Error(9,_generalerrors[9])
 		# Get the bound address/port
-		elif resp[3] == "\x01":
+		elif resp[3] == 1:
 			boundaddr = await self.__recvall(4)
-		elif resp[3] == "\x03":
+		elif resp[3] == 3:
 			resp += await self.__recvall(1)
 			boundaddr = await self.__recvall(resp[4])
 		else:
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
-		boundport = struct.unpack(">H",(await self.__recvall(2)).encode())[0]
+		boundport = struct.unpack(">H",(await self.__recvall(2)))[0]
 		self.__proxysockname = (boundaddr,boundport)
 		if ipaddr != None:
 			self.__proxypeername = (socket.inet_ntoa(ipaddr),destport)
@@ -286,29 +282,29 @@ class socksocket(socket.socket):
 		except socket.error:
 			# It's a DNS name. Check where it should be resolved.
 			if self.__proxy[3]==True:
-				ipaddr = "\x00\x00\x00\x01"
+				ipaddr = b"\x00\x00\x00\x01"
 				rmtrslv = True
 			else:
 				ipaddr = socket.inet_aton(socket.gethostbyname(destaddr))
 		# Construct the request packet
-		req = "\x04\x01" + struct.pack(">H",destport) + ipaddr
+		req = b"\x04\x01" + struct.pack(">H",destport) + ipaddr
 		# The username parameter is considered userid for SOCKS4
 		if self.__proxy[4] != None:
 			req = req + self.__proxy[4]
-		req = req + "\x00"
+		req = req + b"\x00"
 		# DNS name if remote resolving is required
 		# NOTE: This is actually an extension to the SOCKS4 protocol
 		# called SOCKS4A and may not be supported in all cases.
 		if rmtrslv==True:
-			req = req + destaddr + "\x00"
+			req = req + destaddr + b"\x00"
 		self.sendall(req)
 		# Get the response from the server
 		resp = self.__recvall(8)
-		if resp[0] != "\x00":
+		if resp[0] != 0:
 			# Bad data
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
-		if resp[1] != "\x5A":
+		if resp[1] != 90:
 			# Server returned an error
 			self.close()
 			if ord(resp[1]) in (91,92,93):
@@ -332,10 +328,10 @@ class socksocket(socket.socket):
 			addr = socket.gethostbyname(destaddr)
 		else:
 			addr = destaddr
-		self.sendall("CONNECT " + addr + ":" + str(destport) + " HTTP/1.1\r\n" + "Host: " + destaddr + "\r\n\r\n")
+		self.sendall(b"CONNECT " + addr.encode() + b":" + str(destport).encode() + b" HTTP/1.1\r\n" + b"Host: " + destaddr.encode() + b"\r\n\r\n")
 		# We read the response until we get the string "\r\n\r\n"
 		resp = self.recv(1)
-		while resp.find("\r\n\r\n")==-1:
+		while resp.find(b"\r\n\r\n")==-1:
 			resp = resp + self.recv(1)
 		# We just need the first line to check if the connection
 		# was successful
