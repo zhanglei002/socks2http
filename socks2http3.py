@@ -42,11 +42,12 @@ async def connect_target(host):
         traceback.print_exc()
     #print("target connected")
     return target
-
-async def pump(reader, writer, stats, mychan, killevent, timeout = 30, bulk = 8192):
+quit = False
+async def pump(reader, writer, stats, mychan, killevent, timeout = 15, bulk = 8192):
     killwait = loop.create_task(killevent.wait())
     readwait = loop.create_task(reader.read(bulk))
-    while True:
+    global quit
+    while not quit:
         if readwait is None: readwait = loop.create_task(reader.read(bulk))
         done, pending = await asyncio.wait([killwait, readwait], loop = loop, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
         if readwait in done:
@@ -71,7 +72,8 @@ async def pump(reader, writer, stats, mychan, killevent, timeout = 30, bulk = 81
 
 async def handle_http(reader, writer):
     stats = {"up":0, "down":0, "uptimeout":False, "downtimeout":False}
-    method, path, protocol, data = await get_request(reader, writer) 
+    method, path, protocol, data = await get_request(reader, writer)
+    pendingsend = None
     if method == None:
         return
     elif method == b'CONNECT':
@@ -90,13 +92,16 @@ async def handle_http(reader, writer):
         if not target:
             print("Not target", target)
             return
-        target.send(b'%s %s %s'%(method, url, protocol)+ data)
+        pendingsend = b'%s %s %s'%(method, url, protocol)+ data
     else:
         print("HTTPProxy protocol error", method)
         return
 
     killpipeevent = asyncio.Event(loop = loop)
     socks_reader, socks_writer = await asyncio.open_connection(sock=target, loop=loop)
+    if pendingsend is not None:
+        socks_writer.write(pendingsend)
+
     downpump = pump(socks_reader, writer, stats, 'down', killpipeevent)
     uppump = pump(reader, socks_writer, stats, 'up', killpipeevent)
     await asyncio.wait([uppump, downpump], loop = loop)
@@ -118,6 +123,8 @@ except KeyboardInterrupt:
     pass
 
 # Close the server
+quit = True
 server.close()
 loop.run_until_complete(server.wait_closed())
+loop.run_until_complete(asyncio.sleep(5,loop=loop))
 loop.close()
