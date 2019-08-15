@@ -233,7 +233,7 @@ class socksocket(socket.socket):
 			# Connection failed
 			self.close()
 			if resp[1]<=8:
-				raise Socks5Error(ord(resp[1]),_generalerrors[ord(resp[1])])
+				raise Socks5Error(resp[1],_generalerrors[resp[1]])
 			else:
 				raise Socks5Error(9,_generalerrors[9])
 		# Get the bound address/port
@@ -307,9 +307,9 @@ class socksocket(socket.socket):
 		if resp[1] != 90:
 			# Server returned an error
 			self.close()
-			if ord(resp[1]) in (91,92,93):
+			if resp[1] in (91,92,93):
 				self.close()
-				raise Socks4Error((ord(resp[1]),_socks4errors[ord(resp[1])-90]))
+				raise Socks4Error((resp[1],_socks4errors[resp[1]-90]))
 			else:
 				raise Socks4Error((94,_socks4errors[4]))
 		# Get the bound address/port
