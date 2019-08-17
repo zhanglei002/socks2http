@@ -233,9 +233,9 @@ class socksocket(socket.socket):
 			# Connection failed
 			self.close()
 			if resp[1]<=8:
-				raise Socks5Error(resp[1],_generalerrors[resp[1]])
+				raise Socks5Error((resp[1],_generalerrors[resp[1]]))
 			else:
-				raise Socks5Error(9,_generalerrors[9])
+				raise Socks5Error((9,_generalerrors[9]))
 		# Get the bound address/port
 		elif resp[3] == 1:
 			boundaddr = await self.__recvall(4)
