@@ -98,7 +98,9 @@ async def handle_http(reader, writer):
         return
 
     killpipeevent = asyncio.Event(loop = loop)
-    socks_reader, socks_writer = await asyncio.open_connection(sock=target, loop=loop)
+
+    #socks_reader, socks_writer = await asyncio.open_connection(sock=target, loop=loop)
+    socks_reader, socks_writer = target.reader, target.writer#await asyncio.open_connection(sock=target, loop=loop)
     if pendingsend is not None:
         socks_writer.write(pendingsend)
 
