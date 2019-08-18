@@ -332,7 +332,7 @@ class socksocket(socket.socket):
 		# We read the response until we get the string "\r\n\r\n"
 		resp = await self.__recvall(1)
 		while resp.find(b"\r\n\r\n")==-1:
-			resp = resp + await self.__recvall(8)
+			resp = resp + await self.__recvall(1)
 		# We just need the first line to check if the connection
 		# was successful
 		statusline = resp.splitlines()[0].split(" ",2)
