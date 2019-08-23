@@ -168,7 +168,7 @@ class socksocket(socket.socket):
 			# The username/password details were supplied to the
 			# setproxy method so we support the USERNAME/PASSWORD
 			# authentication (in addition to the standard none).
-			self.sendall(b"\x05\x02\x00\x02")
+			self.writer.write(b"\x05\x02\x00\x02")
 		else:
 			# No username/password were entered, therefore we
 			# only support connections with no authentication.
@@ -177,7 +177,7 @@ class socksocket(socket.socket):
 		# method was selected
 		chosenauth = await self.__recvall(2)
 		if chosenauth[0] != 5:
-			self.close()
+			self.writer.close()
 			print("ret c", repr(chosenauth), repr(chosenauth[0]))
 			raise GeneralProxyError((1,_generalerrors[1]))
 		# Check the chosen authentication method
@@ -187,20 +187,20 @@ class socksocket(socket.socket):
 		elif chosenauth[1] == 2:
 			# Okay, we need to perform a basic username/password
 			# authentication.
-			self.sendall(b"\x01" + chr(len(self.__proxy[4])) + self.__proxy[4] + chr(len(self.proxy[5])) + self.__proxy[5])
-			authstat = self.__recvall(2)
+			self.writer.write(b"\x01" + chr(len(self.__proxy[4])) + self.__proxy[4] + chr(len(self.proxy[5])) + self.__proxy[5])
+			authstat = await self.__recvall(2)
 			if authstat[0] != 1:
 				# Bad response
-				self.close()
+				self.writer.close()
 				raise GeneralProxyError((1,_generalerrors[1]))
 			if authstat[1] != 0:
 				# Authentication failed
-				self.close()
+				self.writer.close()
 				raise Socks5AuthError((3,_socks5autherrors[3]))
 			# Authentication succeeded
 		else:
 			# Reaching here is always bad
-			self.close()
+			self.writer.close()
 			if chosenauth[1] == 255:
 				raise Socks5AuthError((2,_socks5autherrors[2]))
 			else:
@@ -227,15 +227,15 @@ class socksocket(socket.socket):
 		# Get the response
 		resp = await self.__recvall(4)
 		if resp[0] != 5:
-			self.close()
+			self.writer.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
 		elif resp[1] != 0:
 			# Connection failed
-			self.close()
+			self.writer.close()
 			if resp[1]<=8:
-				raise Socks5Error(ord(resp[1]),_generalerrors[ord(resp[1])])
+				raise Socks5Error((resp[1],_generalerrors[resp[1]]))
 			else:
-				raise Socks5Error(9,_generalerrors[9])
+				raise Socks5Error((9,_generalerrors[9]))
 		# Get the bound address/port
 		elif resp[3] == 1:
 			boundaddr = await self.__recvall(4)
@@ -243,7 +243,7 @@ class socksocket(socket.socket):
 			resp += await self.__recvall(1)
 			boundaddr = await self.__recvall(resp[4])
 		else:
-			self.close()
+			self.writer.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
 		boundport = struct.unpack(">H",(await self.__recvall(2)))[0]
 		self.__proxysockname = (boundaddr,boundport)
@@ -271,7 +271,7 @@ class socksocket(socket.socket):
 		"""
 		return self.__proxypeername
 	
-	def __negotiatesocks4(self,destaddr,destport):
+	async def __negotiatesocks4(self,destaddr,destport):
 		"""__negotiatesocks4(self,destaddr,destport)
 		Negotiates a connection through a SOCKS4 server.
 		"""
@@ -297,19 +297,19 @@ class socksocket(socket.socket):
 		# called SOCKS4A and may not be supported in all cases.
 		if rmtrslv==True:
 			req = req + destaddr + b"\x00"
-		self.sendall(req)
+		self.writer.write(req)
 		# Get the response from the server
-		resp = self.__recvall(8)
+		resp = await self.__recvall(8)
 		if resp[0] != 0:
 			# Bad data
-			self.close()
+			self.writer.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
 		if resp[1] != 90:
 			# Server returned an error
-			self.close()
-			if ord(resp[1]) in (91,92,93):
-				self.close()
-				raise Socks4Error((ord(resp[1]),_socks4errors[ord(resp[1])-90]))
+			self.writer.close()
+			if resp[1] in (91,92,93):
+				self.writer.close()
+				raise Socks4Error((resp[1],_socks4errors[resp[1]-90]))
 			else:
 				raise Socks4Error((94,_socks4errors[4]))
 		# Get the bound address/port
@@ -319,7 +319,7 @@ class socksocket(socket.socket):
 		else:
 			self.__proxypeername = (destaddr,destport)
 	
-	def __negotiatehttp(self,destaddr,destport):
+	async def __negotiatehttp(self,destaddr,destport):
 		"""__negotiatehttp(self,destaddr,destport)
 		Negotiates a connection through an HTTP server.
 		"""
@@ -328,24 +328,24 @@ class socksocket(socket.socket):
 			addr = socket.gethostbyname(destaddr)
 		else:
 			addr = destaddr
-		self.sendall(b"CONNECT " + addr.encode() + b":" + str(destport).encode() + b" HTTP/1.1\r\n" + b"Host: " + destaddr.encode() + b"\r\n\r\n")
+		self.writer.write(b"CONNECT " + addr.encode() + b":" + str(destport).encode() + b" HTTP/1.1\r\n" + b"Host: " + destaddr.encode() + b"\r\n\r\n")
 		# We read the response until we get the string "\r\n\r\n"
-		resp = self.recv(1)
+		resp = await self.__recvall(1)
 		while resp.find(b"\r\n\r\n")==-1:
-			resp = resp + self.recv(1)
+			resp = resp + await self.__recvall(1)
 		# We just need the first line to check if the connection
 		# was successful
 		statusline = resp.splitlines()[0].split(" ",2)
 		if statusline[0] not in ("HTTP/1.0","HTTP/1.1"):
-			self.close()
+			self.writer.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
 		try:
 			statuscode = int(statusline[1])
 		except ValueError:
-			self.close()
+			self.writer.close()
 			raise GeneralProxyError((1,_generalerrors[1]))
 		if statuscode != 200:
-			self.close()
+			self.writer.close()
 			raise HTTPError((statuscode,statusline[2]))
 		self.__proxysockname = ("0.0.0.0",0)
 		self.__proxypeername = (addr,destport)
@@ -374,15 +374,18 @@ class socksocket(socket.socket):
 			else:
 				portnum = 1080
 			_orgsocket.connect(self,(self.__proxy[1],portnum))
-			self.__negotiatesocks4(destpair[0],destpair[1])
+			self.reader, self.writer = await asyncio.open_connection(sock=self, loop=asyncio.get_event_loop())
+			await self.__negotiatesocks4(destpair[0],destpair[1])
 		elif self.__proxy[0] == PROXY_TYPE_HTTP:
 			if self.__proxy[2] != None:
 				portnum = self.__proxy[2]
 			else:
 				portnum = 8080
 			_orgsocket.connect(self,(self.__proxy[1],portnum))
-			self.__negotiatehttp(destpair[0],destpair[1])
+			self.reader, self.writer = await asyncio.open_connection(sock=self, loop=asyncio.get_event_loop())
+			await self.__negotiatehttp(destpair[0],destpair[1])
 		elif self.__proxy[0] == None:
 			_orgsocket.connect(self,(destpair[0],destpair[1]))
+			self.reader, self.writer = await asyncio.open_connection(sock=self, loop=asyncio.get_event_loop())
 		else:
 			raise GeneralProxyError((4,_generalerrors[4]))
